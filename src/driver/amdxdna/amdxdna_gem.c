@@ -556,8 +556,20 @@ static void amdxdna_gem_shmem_obj_free(struct drm_gem_object *gobj)
 	if (abo->type == AMDXDNA_BO_DEV_HEAP)
 		drm_mm_takedown(&abo->mm);
 
-	if (amdxdna_iova_enabled(xdna))
+	if (amdxdna_iova_enabled(xdna)) {
+		/*
+		 * Wait for all DMA fences before unmapping the IOVA.
+		 * Without this, the device can still be DMA-ing to this
+		 * buffer's IOVA after we unmap it, causing IOMMU page
+		 * faults. BOOKKEEP usage waits for all fence types.
+		 *
+		 * If firmware is hung, TDR will eventually terminate
+		 * context execution and signal the fences.
+		 */
+		dma_resv_wait_timeout(gobj->resv, DMA_RESV_USAGE_BOOKKEEP,
+				      false, MAX_SCHEDULE_TIMEOUT);
 		amdxdna_iommu_unmap_bo(xdna, abo);
+	}
 
 	amdxdna_gem_vunmap(abo);
 	mutex_destroy(&abo->lock);
