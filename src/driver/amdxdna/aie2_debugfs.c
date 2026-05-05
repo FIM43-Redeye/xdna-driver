@@ -320,7 +320,175 @@ static int test_case02(struct amdxdna_dev_hdl *ndev, u32 argc, const u32 *args)
 	return ret;
 }
 
-#define NPUTEST_MAX_PARAM 5
+/*
+ * Raw mailbox response capture (test_case04). Lenient analogue of
+ * xdna_msg_cb: accepts whatever size firmware returns and records it,
+ * rather than failing on size mismatch. Used for diagnostic experiments
+ * where the response shape may not match any known driver-side struct
+ * (e.g. unsupported opcodes that may return short error responses).
+ *
+ * Lifetime: instances MUST be heap-allocated and live across a possible
+ * post-timeout late callback. xdna_mailbox_release_channel() (called from
+ * PM suspend / driver teardown) iterates pending messages and invokes
+ * notify_cb on each — including ones whose host-side wait already gave
+ * up. Releasing the buffer on a timeout path triggered a use-after-free
+ * page fault on Phoenix when firmware stopped responding to a malformed
+ * AIE_RW_ACCESS write (verified 2026-05-05, kernel oops in
+ * aie2_dbgfs_raw_resp_cb+0x9). The conservative fix: heap-allocate, free
+ * only when the callback has fired (wait_for_completion_timeout > 0),
+ * and intentionally leak on timeout. Loss is bounded to <= 1KB resp +
+ * 1KB req per timed-out call, in a debugfs-only diagnostic path that no
+ * production firmware should ever exercise.
+ */
+struct aie2_dbgfs_raw_resp {
+	u8			*data;
+	size_t			cap;
+	size_t			actual;
+	struct completion	comp;
+};
+
+static int aie2_dbgfs_raw_resp_cb(void *handle, void __iomem *data, size_t size)
+{
+	struct aie2_dbgfs_raw_resp *r = handle;
+
+	r->actual = size;
+	if (data && size && r->cap)
+		memcpy_fromio(r->data, data, min(size, r->cap));
+	complete(&r->comp);
+	return 0;
+}
+
+/*
+ * test_case04: send arbitrary mailbox opcode + payload, capture response.
+ *
+ * Bypasses aie2_is_supported_msg's firmware-feature gate by going straight
+ * to xdna_mailbox_send_msg on the mgmt channel. Production paths still
+ * respect their guards; this is a debugfs side-channel for experiments.
+ *
+ * args layout: [0]=4, [1]=opcode, [2]=req_size_words, [3]=resp_cap_bytes,
+ *              [4..]=req payload words (little-endian, host order).
+ *
+ * Bounds: req_size in 1..256 words (1 KiB), resp_cap in 0..1024 bytes.
+ * Both response struct and request payload buffers are heap-allocated and
+ * intentionally leaked on RX timeout to keep a late notify_cb pointing at
+ * valid memory. See struct aie2_dbgfs_raw_resp comment for the rationale.
+ *
+ * Output: response size + hex dump to dmesg via XDNA_INFO/print_hex_dump.
+ */
+static int test_case04(struct amdxdna_dev_hdl *ndev, u32 argc, const u32 *args)
+{
+	struct xdna_mailbox_msg msg = { 0 };
+	struct aie2_dbgfs_raw_resp *rbuf;
+	u32 opcode, req_size, resp_cap, *req_words, i;
+	size_t req_bytes;
+	int ret;
+
+	if (argc < 4) {
+		XDNA_ERR(ndev->xdna,
+			 "test 4: need at least 4 args (id opcode req_size_words resp_cap_bytes ...)");
+		return -EINVAL;
+	}
+
+	opcode = args[1];
+	req_size = args[2];
+	resp_cap = args[3];
+
+	if (req_size < 1 || req_size > 0x100) {
+		XDNA_ERR(ndev->xdna, "test 4: bad req_size %u (need 1..256 words)", req_size);
+		return -EINVAL;
+	}
+	if (resp_cap > 0x400) {
+		XDNA_ERR(ndev->xdna, "test 4: bad resp_cap %u (max 1024 bytes)", resp_cap);
+		return -EINVAL;
+	}
+	if (argc - 4 < req_size) {
+		XDNA_ERR(ndev->xdna,
+			 "test 4: argc=%u short, need %u request words after fixed args",
+			 argc, req_size);
+		return -EINVAL;
+	}
+	if (!ndev->mgmt_chann) {
+		XDNA_ERR(ndev->xdna, "test 4: mgmt channel not alive");
+		return -ENODEV;
+	}
+
+	rbuf = kzalloc(sizeof(*rbuf), GFP_KERNEL);
+	if (!rbuf)
+		return -ENOMEM;
+	if (resp_cap) {
+		rbuf->data = kzalloc(resp_cap, GFP_KERNEL);
+		if (!rbuf->data) {
+			kfree(rbuf);
+			return -ENOMEM;
+		}
+	}
+	rbuf->cap = resp_cap;
+	init_completion(&rbuf->comp);
+
+	req_bytes = req_size * sizeof(u32);
+	req_words = kmalloc(req_bytes, GFP_KERNEL);
+	if (!req_words) {
+		kfree(rbuf->data);
+		kfree(rbuf);
+		return -ENOMEM;
+	}
+	for (i = 0; i < req_size; i++)
+		req_words[i] = args[4 + i];
+
+	msg.opcode = opcode;
+	msg.handle = rbuf;
+	msg.notify_cb = aie2_dbgfs_raw_resp_cb;
+	msg.send_data = (u8 *)req_words;
+	msg.send_size = req_bytes;
+
+	XDNA_INFO(ndev->xdna,
+		  "test 4: send opcode=0x%x req_bytes=%zu resp_cap=%u",
+		  opcode, req_bytes, resp_cap);
+	print_hex_dump(KERN_INFO, "test4 req: ", DUMP_PREFIX_OFFSET, 16, 4,
+		       req_words, req_bytes, false);
+
+	ret = xdna_mailbox_send_msg(ndev->mgmt_chann, &msg, TX_TIMEOUT);
+	if (ret) {
+		/*
+		 * send_msg failed -> message was never queued, no callback
+		 * will fire. Safe to free everything.
+		 */
+		XDNA_ERR(ndev->xdna, "test 4: send failed ret=%d", ret);
+		kfree(req_words);
+		kfree(rbuf->data);
+		kfree(rbuf);
+		return ret;
+	}
+
+	if (!wait_for_completion_timeout(&rbuf->comp, msecs_to_jiffies(RX_TIMEOUT))) {
+		/*
+		 * Firmware did not respond. The message remains on the mgmt
+		 * channel queue; xdna_mailbox_release_channel() will eventually
+		 * call our notify_cb with the rbuf handle. Intentionally leak
+		 * rbuf and req_words so that callback writes valid memory.
+		 * (See struct aie2_dbgfs_raw_resp comment for the incident
+		 * that prompted this.)
+		 */
+		XDNA_ERR(ndev->xdna,
+			 "test 4: response timeout (5s) -- leaking %zu+%u bytes to keep late cb safe",
+			 sizeof(*rbuf) + req_bytes, resp_cap);
+		return -ETIME;
+	}
+
+	/* callback fired -> rbuf->actual / rbuf->data populated; safe to free. */
+	XDNA_INFO(ndev->xdna, "test 4: opcode=0x%x got %zu bytes (cap %u)",
+		  opcode, rbuf->actual, resp_cap);
+	if (rbuf->data && rbuf->actual)
+		print_hex_dump(KERN_INFO, "test4 resp: ", DUMP_PREFIX_OFFSET, 16, 4,
+			       rbuf->data, min(rbuf->actual, (size_t)resp_cap), false);
+
+	kfree(req_words);
+	kfree(rbuf->data);
+	kfree(rbuf);
+	return 0;
+}
+
+#define NPUTEST_MAX_PARAM 32
 static ssize_t aie2_dbgfs_nputest(struct file *file, const char __user *ptr,
 				  size_t len, loff_t *off)
 {
@@ -363,6 +531,9 @@ static ssize_t aie2_dbgfs_nputest(struct file *file, const char __user *ptr,
 	case 3:
 		ret = aie2_self_test(ndev);
 		break;
+	case 4:
+		ret = test_case04(ndev, argc, args);
+		break;
 	default:
 		XDNA_ERR(ndev->xdna, "Unknown test case ID %d\n", args[0]);
 	}
@@ -389,6 +560,14 @@ static int aie2_dbgfs_nputest_show(struct seq_file *m, void *unused)
 	seq_puts(m, "\t\tresp_len - response length in words (1 - 28)\n");
 	seq_puts(m, "\t\tpattern - data to fill message and response\n");
 	seq_puts(m, "\t\tcnt - send cnt messages without wait, optional (default 1)\n");
+	seq_puts(m, "\n");
+	seq_puts(m, "test case 4 usage (raw mailbox send, bypasses opcode-feature gate):\n");
+	seq_puts(m, "\techo 4 opcode req_size resp_cap req_word0 req_word1 ... > <nputest>\n");
+	seq_puts(m, "\t\topcode    - mailbox opcode (e.g. 0x203 = AIE_RW_ACCESS)\n");
+	seq_puts(m, "\t\treq_size  - request payload length in 32-bit words (1..256)\n");
+	seq_puts(m, "\t\tresp_cap  - max response bytes to capture (0..1024)\n");
+	seq_puts(m, "\t\treq_wordN - request payload words, host byte order\n");
+	seq_puts(m, "\t\tresult dumped to dmesg as 'test4 req:'/'test4 resp:'\n");
 
 	return 0;
 }
