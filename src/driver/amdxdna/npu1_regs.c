@@ -61,6 +61,17 @@ const struct dpm_clk_freq npu1_dpm_clk_table[] = {
 
 const struct msg_op_ver npu1_msg_op_tbl[] = {
 	{ AIE2_FW_VERSION(5, 8), MSG_OP_CHAIN_EXEC_NPU },
+	/*
+	 * Phoenix firmware (verified at FW 1.5.5.391, protocol 5.8) implements
+	 * MSG_OP_AIE_RW_ACCESS (opcode 0x203). Verified by sending the opcode
+	 * via the aie2_debugfs raw-mailbox path (test_case04) and observing
+	 * status=AIE2_STATUS_SUCCESS with a valid Timer_Low readback that
+	 * advances cycle-correctly between reads. Upstream npu1_regs.c omitted
+	 * this entry, leaving the op-table check in aie2_is_supported_msg as
+	 * the only obstacle to using xrt::hw_context::read_aie_reg / write_aie_reg
+	 * on Phoenix.
+	 */
+	{ AIE2_FW_VERSION(5, 8), MSG_OP_AIE_RW_ACCESS },
 	{ 0 },
 };
 
