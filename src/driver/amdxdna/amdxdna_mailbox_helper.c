@@ -25,14 +25,27 @@ int xdna_msg_cb(void *handle, void __iomem *data, size_t size)
 	if (unlikely(!data))
 		goto out;
 
-	if (unlikely(cb_arg->size != size)) {
-		cb_arg->error = -EINVAL;
+	/*
+	 * Firmware error replies are sometimes shorter than the request
+	 * struct's response shape implies. For example, an unrecognized
+	 * opcode is rejected with just a 4-byte AIE2_STATUS_INVALID_COMMAND
+	 * status word, even though the matching get_*_resp struct includes
+	 * additional fields meaningful only on the success path.
+	 *
+	 * Accept any response that fits in the caller's buffer; copy what
+	 * was sent and leave the remaining bytes at the values set by
+	 * DECLARE_XDNA_MSG_COMMON (status = sentinel, others = 0). Callers
+	 * read the status field and act on it. Oversized responses remain
+	 * an error -- they would overrun the caller's buffer.
+	 */
+	if (unlikely(size > cb_arg->size)) {
+		cb_arg->error = -EMSGSIZE;
 		goto out;
 	}
 
-	memcpy_fromio(cb_arg->data, data, cb_arg->size);
+	memcpy_fromio(cb_arg->data, data, size);
 	print_hex_dump_debug("resp data: ", DUMP_PREFIX_OFFSET,
-			     16, 4, cb_arg->data, cb_arg->size, false);
+			     16, 4, cb_arg->data, size, false);
 out:
 	ret = cb_arg->error;
 	complete(&cb_arg->comp);
