@@ -197,6 +197,42 @@ out:
 	return ret;
 }
 
+int amdxdna_drm_force_connect_hwctx_ioctl(struct drm_device *dev, void *data,
+					  struct drm_file *filp)
+{
+	struct amdxdna_client *client = filp->driver_priv;
+	struct amdxdna_drm_force_connect_hwctx *args = data;
+	struct amdxdna_dev *xdna = to_xdna_dev(dev);
+	struct amdxdna_ctx *ctx;
+	int ret = 0, idx;
+
+	if (!xdna->dev_info->ops->ctx_force_connect)
+		return -EOPNOTSUPP;
+
+	if (!drm_dev_enter(dev, &idx))
+		return -ENODEV;
+
+	idx = srcu_read_lock(&client->ctx_srcu);
+	ctx = xa_load(&client->ctx_xa, args->handle);
+	if (!ctx) {
+		XDNA_DBG(xdna, "PID %d failed to get ctx %d",
+			 client->pid, args->handle);
+		ret = -EINVAL;
+		goto unlock_srcu;
+	}
+
+	ret = xdna->dev_info->ops->ctx_force_connect(ctx, args->timeout_ms);
+	if (ret) {
+		XDNA_DBG(xdna, "PID %d ctx %d force_connect ret %d",
+			 client->pid, args->handle, ret);
+	}
+
+unlock_srcu:
+	srcu_read_unlock(&client->ctx_srcu, idx);
+	drm_dev_exit(idx);
+	return ret;
+}
+
 int amdxdna_drm_config_hwctx_ioctl(struct drm_device *dev, void *data, struct drm_file *filp)
 {
 	struct amdxdna_client *client = filp->driver_priv;

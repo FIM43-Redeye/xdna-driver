@@ -59,6 +59,7 @@ extern "C" {
 #define	DRM_AMDXDNA_SET_STATE		8
 #define	DRM_AMDXDNA_WAIT_CMD		9
 #define DRM_AMDXDNA_GET_ARRAY		10
+#define DRM_AMDXDNA_FORCE_CONNECT_HWCTX	11
 
 #define	AMDXDNA_DEV_TYPE_UNKNOWN	-1
 #define	AMDXDNA_DEV_TYPE_KMQ		0
@@ -145,6 +146,36 @@ struct amdxdna_drm_create_hwctx {
 struct amdxdna_drm_destroy_hwctx {
 	__u32 handle;
 	__u32 pad;
+};
+
+/**
+ * struct amdxdna_drm_force_connect_hwctx - Force eager partition connect.
+ * @handle:     Context handle.
+ * @timeout_ms: Max wait in milliseconds (0 = wait forever, interruptible).
+ *
+ * Synchronously triggers partition allocation and ctx connect for an
+ * already-created hwctx, returning when the ctx reaches the CONNECTED
+ * state.  By default a hwctx stays in DISCONNECTED until the first kernel
+ * command is submitted, at which point the runqueue dispatcher allocates
+ * a partition and runs aie2_ctx_connect.  That lazy path lets the
+ * scheduler defer reservation, but it leaves ctx->num_col == 0 between
+ * hwctx_create and the first submit -- and any DRM_AMDXDNA_AIE_RW_ACCESS
+ * (or similar) request issued in that window fails with EINVAL.
+ *
+ * Tools that want to send AIE register accesses BEFORE submitting the
+ * first kernel job (e.g. configuring a performance counter from
+ * userspace) call this ioctl after hwctx_create to force the connect to
+ * happen synchronously.  Most workloads should NOT use this -- the lazy
+ * default is what lets the runqueue scheduler re-balance partitions
+ * across hwctxs by priority.
+ *
+ * Returns 0 on CONNECTED, -EIO on fatal ctx error, -ETIMEDOUT on timeout,
+ * -EINTR on signal, -EOPNOTSUPP when the device's ops don't implement
+ * force-connect.
+ */
+struct amdxdna_drm_force_connect_hwctx {
+	__u32 handle;
+	__u32 timeout_ms;
 };
 
 /**
@@ -922,6 +953,10 @@ struct amdxdna_drm_set_state {
 #define DRM_IOCTL_AMDXDNA_GET_ARRAY \
 	DRM_IOWR(DRM_COMMAND_BASE + DRM_AMDXDNA_GET_ARRAY, \
 		struct amdxdna_drm_get_array)
+
+#define DRM_IOCTL_AMDXDNA_FORCE_CONNECT_HWCTX \
+	DRM_IOWR(DRM_COMMAND_BASE + DRM_AMDXDNA_FORCE_CONNECT_HWCTX, \
+		 struct amdxdna_drm_force_connect_hwctx)
 
 #define DRM_IOCTL_AMDXDNA_SET_STATE \
 	DRM_IOWR(DRM_COMMAND_BASE + DRM_AMDXDNA_SET_STATE, \

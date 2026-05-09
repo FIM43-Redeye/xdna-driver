@@ -843,6 +843,22 @@ int aie2_ctx_config(struct amdxdna_ctx *ctx, u32 type, u64 value, void *buf, u32
 	return ret;
 }
 
+int aie2_ctx_force_connect(struct amdxdna_ctx *ctx, u32 timeout_ms)
+{
+	struct amdxdna_dev *xdna = ctx->client->xdna;
+	struct aie2_ctx_rq *rq = &xdna->dev_handle->ctx_rq;
+	int ret;
+
+	ret = amdxdna_pm_resume_get(xdna);
+	if (ret)
+		return ret;
+
+	ret = aie2_rq_force_connect(rq, ctx, timeout_ms);
+
+	amdxdna_pm_suspend_put(xdna);
+	return ret;
+}
+
 static int aie2_add_job_dependency(struct amdxdna_sched_job *job, u32 *syncobj_hdls,
 				   u64 *syncobj_points, u32 syncobj_cnt)
 {

@@ -2177,6 +2177,7 @@ const struct amdxdna_dev_ops aie2_ops = {
 	.ctx_init		= aie2_ctx_init,
 	.ctx_fini		= aie2_ctx_fini,
 	.ctx_config		= aie2_ctx_config,
+	.ctx_force_connect	= aie2_ctx_force_connect,
 	.cmd_submit		= aie2_cmd_submit,
 	.cmd_wait		= aie2_cmd_wait,
 	.hmm_invalidate		= aie2_hmm_invalidate,

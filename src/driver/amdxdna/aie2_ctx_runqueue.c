@@ -995,6 +995,80 @@ void aie2_rq_submit_exit(struct amdxdna_ctx *ctx)
 	up_read(&ctx->priv->io_sem);
 }
 
+/*
+ * Synchronously transition ctx from DISCONNECTED to CONNECTED so userspace
+ * can issue AIE register accesses (DRM_AMDXDNA_AIE_RW_ACCESS via ndev->ops)
+ * before submitting the first kernel command. The lazy-alloc default leaves
+ * ctx->num_col == 0 between hwctx_create and first cmd_submit, which makes
+ * any AIE access fail with EINVAL ("Column %u is outside partition range
+ * [0, 0)"). Tools that need to configure on-chip state from userspace
+ * BEFORE the kernel runs (e.g. bridge-trace-runner setting up a perf
+ * counter for read-back) call this to drive the connect synchronously.
+ *
+ * timeout_ms = 0 waits indefinitely (interruptible). Returns 0 on
+ * CONNECTED, -EIO on fatal ctx error, -ETIMEDOUT on timeout, -EINTR on
+ * signal.
+ *
+ * Note: this does NOT pin the ctx in CONNECTED state. The runqueue
+ * scheduler may still rotate it out under load -- userspace must accept
+ * that any subsequent AIE access can race with a swap-out. In practice
+ * for trace-runner-style tools the gap between force_connect() and
+ * run.start() is microseconds and the scheduler doesn't move idle
+ * partitions on that timescale.
+ */
+int aie2_rq_force_connect(struct aie2_ctx_rq *rq, struct amdxdna_ctx *ctx,
+			  u32 timeout_ms)
+{
+	struct amdxdna_dev *xdna = ctx_rq_to_xdna_dev(rq);
+	long wait_ret;
+	int ret = 0;
+
+	down_read(&ctx->priv->io_sem);
+	if (aie2_is_ctx_connected(ctx)) {
+		up_read(&ctx->priv->io_sem);
+		return 0;
+	}
+	if (aie2_is_ctx_fatal(ctx)) {
+		up_read(&ctx->priv->io_sem);
+		return -EIO;
+	}
+	up_read(&ctx->priv->io_sem);
+
+	queue_work(rq->work_q, &ctx->dispatch_work);
+	if (timeout_ms == 0) {
+		wait_ret = wait_event_interruptible(
+			ctx->priv->connect_waitq,
+			aie2_is_ctx_connected(ctx) || aie2_is_ctx_fatal(ctx));
+		if (wait_ret < 0)
+			ret = wait_ret;
+	} else {
+		wait_ret = wait_event_interruptible_timeout(
+			ctx->priv->connect_waitq,
+			aie2_is_ctx_connected(ctx) || aie2_is_ctx_fatal(ctx),
+			msecs_to_jiffies(timeout_ms));
+		if (wait_ret == 0)
+			ret = -ETIMEDOUT;
+		else if (wait_ret < 0)
+			ret = wait_ret;
+	}
+
+	if (ret) {
+		XDNA_DBG(xdna, "%s force_connect wait failed, ret %d",
+			 ctx->name, ret);
+		return ret;
+	}
+	if (aie2_is_ctx_fatal(ctx)) {
+		XDNA_ERR(xdna, "%s fatal during force_connect", ctx->name);
+		return -EIO;
+	}
+	if (!aie2_is_ctx_connected(ctx))
+		return -EAGAIN;
+
+	XDNA_DBG(xdna, "%s force-connected, num_col %u start_col %u",
+		 ctx->name, ctx->num_col, ctx->start_col);
+	return 0;
+}
+
 static bool
 aie2_enable_special_case(struct aie2_ctx_rq *rq, struct amdxdna_ctx *ctx)
 {

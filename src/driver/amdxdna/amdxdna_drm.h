@@ -73,6 +73,14 @@ struct amdxdna_dev_ops {
 	int (*ctx_init)(struct amdxdna_ctx *ctx);
 	void (*ctx_fini)(struct amdxdna_ctx *ctx);
 	int (*ctx_config)(struct amdxdna_ctx *ctx, u32 type, u64 value, void *buf, u32 size);
+	/*
+	 * Optional. Synchronously transition the ctx from DISCONNECTED to
+	 * CONNECTED so userspace can issue AIE register accesses before
+	 * submitting the first kernel command. timeout_ms = 0 waits
+	 * indefinitely (interruptible). Backends that don't support eager
+	 * connect should leave this NULL; the ioctl returns -EOPNOTSUPP.
+	 */
+	int (*ctx_force_connect)(struct amdxdna_ctx *ctx, u32 timeout_ms);
 	void (*hmm_invalidate)(struct amdxdna_gem_obj *abo, unsigned long cur_seq);
 	int (*cmd_submit)(struct amdxdna_sched_job *job,
 			  u32 *syncobj_hdls, u64 *syncobj_points, u32 syncobj_cnt, u64 *seq);
