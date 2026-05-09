@@ -19,6 +19,7 @@ namespace shim_xdna {
 enum class drv_ioctl_cmd {
   create_ctx,
   destroy_ctx,
+  force_connect_ctx,
   config_ctx_cu_config,
   config_ctx_debug_bo,
 
@@ -74,9 +75,23 @@ struct destroy_ctx_arg {
   uint32_t syncobj_handle;
 };
 
+struct force_connect_ctx_arg {
+  uint32_t ctx_handle;
+  uint32_t timeout_ms;
+};
+
 struct config_ctx_cu_config_arg {
   uint32_t ctx_handle;
   const std::vector<char>& conf_buf;
+  // Physical start column for this partition, picked from
+  // aie_partition_obj.start_col_list.  CDO streams use partition-relative
+  // (logical) column indices; consumers that need physical addressing
+  // (e.g. the emulator) apply this as a shift.  Defaults to 0 so that
+  // call sites that don't populate it (e.g. the UUID-based
+  // hw_context ctor path that bypasses xclbin_parser) leave the
+  // emulator in its no-shift initial state rather than passing
+  // uninitialized memory through to the driver.
+  uint16_t start_col = 0;
 };
 
 struct config_ctx_debug_bo_arg {
@@ -215,7 +230,7 @@ protected:
   bool
   load_bo_info(uint32_t key, bo_info& info) const;
 
-private:
+protected:
   std::shared_ptr<const drv> m_driver;
 
   // Supposed to be set once and used till object is destroyed.
@@ -223,6 +238,7 @@ private:
   mutable int m_dev_fd = -1;
   mutable std::string m_sysfs_root;
 
+private:
   // Proces-wide drm_bo map to allow retrieving the bo by handle.
   // If a bo is exported, then imported within the same process, we will
   // get back the same bo handle. We can, then, retrieve the bo back
@@ -243,6 +259,10 @@ private:
 
   virtual void
   destroy_ctx(destroy_ctx_arg& arg) const
+  { shim_not_supported_err(__func__); }
+
+  virtual void
+  force_connect_ctx(force_connect_ctx_arg& arg) const
   { shim_not_supported_err(__func__); }
 
   virtual void

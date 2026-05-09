@@ -21,6 +21,9 @@ private:
   destroy_ctx(destroy_ctx_arg& arg) const override;
 
   void
+  force_connect_ctx(force_connect_ctx_arg& arg) const override;
+
+  void
   config_ctx_cu_config(config_ctx_cu_config_arg& arg) const override;
 
   void

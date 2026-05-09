@@ -180,6 +180,9 @@ drv_ioctl(drv_ioctl_cmd cmd, void* cmd_arg) const
   case drv_ioctl_cmd::destroy_ctx:
     destroy_ctx(*static_cast<destroy_ctx_arg*>(cmd_arg));
     break;
+  case drv_ioctl_cmd::force_connect_ctx:
+    force_connect_ctx(*static_cast<force_connect_ctx_arg*>(cmd_arg));
+    break;
   case drv_ioctl_cmd::config_ctx_cu_config:
     config_ctx_cu_config(*static_cast<config_ctx_cu_config_arg*>(cmd_arg));
     break;

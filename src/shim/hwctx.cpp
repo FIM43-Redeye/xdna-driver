@@ -41,6 +41,7 @@ xclbin_parser(const xrt::xclbin& xclbin)
     shim_err(EINVAL, "No valid DPU kernel found in xclbin");
   m_ops_per_cycle = aie_partition.ops_per_cycle;
   m_column_cnt = aie_partition.ncol;
+  m_start_col_list = aie_partition.start_col_list;
   //print_info();
 }
 
@@ -95,6 +96,13 @@ xclbin_parser::
 get_ops_per_cycle() const
 {
   return m_ops_per_cycle;
+}
+
+const std::vector<uint16_t>&
+xclbin_parser::
+get_start_col_list() const
+{
+  return m_start_col_list;
 }
 
 int
@@ -291,6 +299,20 @@ delete_ctx_on_device()
     .syncobj_handle = m_syncobj,
   };
   m_device.get_pdev().drv_ioctl(drv_ioctl_cmd::destroy_ctx, &arg);
+}
+
+void
+hwctx::
+force_connect(uint32_t timeout_ms)
+{
+  if (m_handle == AMDXDNA_INVALID_CTX_HANDLE)
+    shim_err(EINVAL, "%s: context not created", __func__);
+
+  force_connect_ctx_arg arg = {
+    .ctx_handle = m_handle,
+    .timeout_ms = timeout_ms,
+  };
+  m_device.get_pdev().drv_ioctl(drv_ioctl_cmd::force_connect_ctx, &arg);
 }
 
 uint32_t

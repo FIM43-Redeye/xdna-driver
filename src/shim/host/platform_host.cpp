@@ -121,6 +121,16 @@ destroy_ctx(destroy_ctx_arg& ctx_arg) const
 
 void
 platform_drv_host::
+force_connect_ctx(force_connect_ctx_arg& ctx_arg) const
+{
+  amdxdna_drm_force_connect_hwctx arg = {};
+  arg.handle = ctx_arg.ctx_handle;
+  arg.timeout_ms = ctx_arg.timeout_ms;
+  ioctl(dev_fd(), DRM_IOCTL_AMDXDNA_FORCE_CONNECT_HWCTX, &arg);
+}
+
+void
+platform_drv_host::
 config_ctx_cu_config(config_ctx_cu_config_arg& ctx_arg) const
 {
   amdxdna_drm_config_hwctx arg = {};
