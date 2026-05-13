@@ -25,11 +25,15 @@ Options:
   -vxdna_test              Build and run vxdna unit tests (-novxdna disable this option)
   -package_legacy_driver   Build package with legacy driver source code
   -package_upstream_driver Build package with upstream driver source code (default)
-  -refresh_dkms            Refresh /usr/src DKMS source from this build and
-                           rebuild the module via DKMS (requires pkexec).
-                           Iteration shortcut: replaces the manual rsync +
-                           "dkms install --force" dance, which can miss
-                           non-amdxdna/ files like configure_kernel.sh.
+  -refresh_dkms            Iteration shortcut: pkexec dpkg -i the freshly-
+                           built xrt_plugin .deb.  The .deb postinst takes
+                           it from there: refreshes /usr/src DKMS source,
+                           runs `dkms install --force` to rebuild the
+                           module against the running kernel, and rmmod +
+                           modprobe to swap the loaded module.  Single
+                           privileged step covers userspace .so + kernel
+                           module + reload.  Name kept for back-compat;
+                           "refresh" is now broader than just DKMS.
 USAGE_END
 }
 
@@ -199,34 +203,35 @@ run_vxdna_tests_func()
 refresh_dkms_source()
 {
   BUILD_TYPE=$1
-  STAGED_DIR=$(readlink -f $BUILD_TYPE/opt/xilinx/xrt/share/amdxdna)
 
-  if [ ! -d $STAGED_DIR ]; then
-    echo "ERROR: $STAGED_DIR not found; run build first." >&2
+  if [ ! -d $BUILD_TYPE ]; then
+    echo "ERROR: $BUILD_TYPE not found; run build first." >&2
     return 1
   fi
-  for f in configure_kernel.sh dkms.conf dkms_driver.sh amdxdna.tar.gz; do
-    if [ ! -f "$STAGED_DIR/$f" ]; then
-      echo "ERROR: $STAGED_DIR/$f missing; build did not produce expected DKMS files." >&2
-      return 1
-    fi
-  done
+
+  # Pick the .deb matching THIS host's OS version -- multiple .debs can
+  # accumulate in $BUILD_TYPE/ (e.g. 25.10 + 26.04 after an upgrade).
+  OS_VER=$(awk -F= '$1=="VERSION_ID" {gsub(/"/, "", $2); print $2}' /etc/os-release)
+  PLUGIN_DEB=$(readlink -f $BUILD_TYPE/xrt_plugin.*_${OS_VER}-amd64-amdxdna.deb 2>/dev/null | head -n1)
+
+  if [ -z "$PLUGIN_DEB" ] || [ ! -f "$PLUGIN_DEB" ]; then
+    echo "ERROR: no xrt_plugin .deb matching Ubuntu $OS_VER found in $BUILD_TYPE/" >&2
+    return 1
+  fi
 
   echo ""
   echo "========================================"
-  echo "Refreshing DKMS source from $STAGED_DIR"
+  echo "Installing $(basename $PLUGIN_DEB)"
+  echo "  (postinst handles DKMS install + module reload)"
   echo "========================================"
 
-  # Use the in-tree dkms_driver.sh from the staged build so /usr/src is
-  # populated from a single canonical source (script + tarball + config),
-  # not a piecemeal rsync.  --remove is tolerated when no prior install
-  # exists, hence the `|| true`.
-  pkexec sh -c "
-    set -e
-    cd '$STAGED_DIR'
-    ./dkms_driver.sh --remove || true
-    ./dkms_driver.sh --install
-  "
+  # The .deb postinst runs dkms_driver.sh --install (refreshing /usr/src
+  # from the freshly-deployed share/amdxdna/ files) and then rmmod +
+  # modprobe to load the rebuilt module.  So a bare `dpkg -i` of the
+  # OS-matched .deb suffices for end-to-end refresh: userspace .so lands
+  # in /opt/xilinx/xrt/lib/, kernel module source lands in /usr/src/,
+  # and the module reloads itself.  Single pkexec for the whole thing.
+  pkexec dpkg -i "$PLUGIN_DEB"
 }
 
 do_build()
@@ -251,9 +256,9 @@ do_build()
     run_vxdna_tests_func $BUILD_TYPE
   fi
 
-  # Optional iteration shortcut: refresh DKMS source from the freshly-built
-  # staged files and rebuild the module.  Module reload is left to the
-  # caller (privileged action, may collide with running tests).
+  # Optional iteration shortcut: dpkg -i the freshly-built xrt_plugin .deb,
+  # whose postinst handles everything else (DKMS install, module reload,
+  # userspace .so deploy).  Single pkexec auth prompt covers the lot.
   if [[ $refresh_dkms == 1 ]]; then
     refresh_dkms_source $BUILD_TYPE
   fi
