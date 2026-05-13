@@ -355,6 +355,8 @@ struct partition_info
 
         data_size = arg.num_element;
         data = reinterpret_cast<decltype(data)>(updated_payload.data());
+      } else {
+        throw;
       }
     }
 
