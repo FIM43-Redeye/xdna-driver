@@ -25,6 +25,11 @@ Options:
   -vxdna_test              Build and run vxdna unit tests (-novxdna disable this option)
   -package_legacy_driver   Build package with legacy driver source code
   -package_upstream_driver Build package with upstream driver source code (default)
+  -refresh_dkms            Refresh /usr/src DKMS source from this build and
+                           rebuild the module via DKMS (requires pkexec).
+                           Iteration shortcut: replaces the manual rsync +
+                           "dkms install --force" dance, which can miss
+                           non-amdxdna/ files like configure_kernel.sh.
 USAGE_END
 }
 
@@ -191,6 +196,39 @@ run_vxdna_tests_func()
   fi
 }
 
+refresh_dkms_source()
+{
+  BUILD_TYPE=$1
+  STAGED_DIR=$(readlink -f $BUILD_TYPE/opt/xilinx/xrt/share/amdxdna)
+
+  if [ ! -d $STAGED_DIR ]; then
+    echo "ERROR: $STAGED_DIR not found; run build first." >&2
+    return 1
+  fi
+  for f in configure_kernel.sh dkms.conf dkms_driver.sh amdxdna.tar.gz; do
+    if [ ! -f "$STAGED_DIR/$f" ]; then
+      echo "ERROR: $STAGED_DIR/$f missing; build did not produce expected DKMS files." >&2
+      return 1
+    fi
+  done
+
+  echo ""
+  echo "========================================"
+  echo "Refreshing DKMS source from $STAGED_DIR"
+  echo "========================================"
+
+  # Use the in-tree dkms_driver.sh from the staged build so /usr/src is
+  # populated from a single canonical source (script + tarball + config),
+  # not a piecemeal rsync.  --remove is tolerated when no prior install
+  # exists, hence the `|| true`.
+  pkexec sh -c "
+    set -e
+    cd '$STAGED_DIR'
+    ./dkms_driver.sh --remove || true
+    ./dkms_driver.sh --install
+  "
+}
+
 do_build()
 {
   BUILD_TYPE=$1
@@ -212,6 +250,13 @@ do_build()
   if [[ $run_vxdna_tests == 1 ]]; then
     run_vxdna_tests_func $BUILD_TYPE
   fi
+
+  # Optional iteration shortcut: refresh DKMS source from the freshly-built
+  # staged files and rebuild the module.  Module reload is left to the
+  # caller (privileged action, may collide with running tests).
+  if [[ $refresh_dkms == 1 ]]; then
+    refresh_dkms_source $BUILD_TYPE
+  fi
 }
 
 # Config variables
@@ -225,6 +270,7 @@ skip_kmod=0
 build_vxdna=1
 run_vxdna_tests=0
 package_legacy_driver=0
+refresh_dkms=0
 njobs=`grep -c ^processor /proc/cpuinfo`
 download_dir=
 xrt_install_prefix="/opt/xilinx/xrt"
@@ -280,6 +326,9 @@ while [ $# -gt 0 ]; do
       ;;
     -package_upstream_driver)
       package_legacy_driver=0
+      ;;
+    -refresh_dkms)
+      refresh_dkms=1
       ;;
     -dir)
       download_dir=$2
