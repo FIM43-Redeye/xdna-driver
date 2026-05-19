@@ -59,11 +59,21 @@ static int aie2_send_mgmt_msg_wait(struct amdxdna_dev_hdl *ndev,
 
 	drm_WARN_ON(&xdna->ddev, !mutex_is_locked(&ndev->aie2_lock));
 	ret = xdna_send_msg_wait(xdna, ndev->mgmt_chann, msg);
-	if (ret == -ETIME) {
-		xdna_mailbox_stop_channel(ndev->mgmt_chann);
-		xdna_mailbox_destroy_channel(ndev->mgmt_chann);
-		ndev->mgmt_chann = NULL;
-	}
+	/*
+	 * Previously: on -ETIME we stopped + destroyed mgmt_chann to defend
+	 * against protocol corruption. That converts a single hung opcode
+	 * (e.g., AIE_RW_ACCESS read on memtile, which has been observed to
+	 * never receive a firmware response on Phoenix NPU1) into a
+	 * device-wide outage: no further mgmt ops can run, modprobe -r
+	 * cascades to SMU wedge, and only a reboot recovers.
+	 *
+	 * Hold the channel up instead. If a real protocol corruption is
+	 * occurring we'd see it as repeated timeouts on subsequent ops,
+	 * which is no worse than the current "always hung" state. If only
+	 * a single opcode was problematic, the channel is fine for the rest.
+	 *
+	 * See finding 2026-05-07-aie-rw-access-memtile-dm-half-impl.md.
+	 */
 
 	if (!ret && *hdl->status != AIE2_STATUS_SUCCESS) {
 		XDNA_ERR(xdna, "command opcode 0x%x failed, status 0x%x",
