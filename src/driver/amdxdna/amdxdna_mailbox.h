@@ -164,6 +164,21 @@ void xdna_mailbox_stop_channel(struct mailbox_channel *mailbox_chann);
 int xdna_mailbox_send_msg(struct mailbox_channel *mailbox_chann,
 			  struct xdna_mailbox_msg *msg, u64 tx_timeout);
 
+/*
+ * xdna_mailbox_cancel_msg() -- Reclaim a still-outstanding message
+ *
+ * @mailbox_chann: Mailbox channel handle
+ * @msg_id: id of the message to cancel (xdna_mailbox_msg.id, assigned by
+ *          a successful xdna_mailbox_send_msg())
+ *
+ * Drop a message whose response will never arrive (the caller's wait
+ * timed out). Removes it from the channel's outstanding-message table
+ * and frees it, so a later channel teardown does not flush a message
+ * with a dangling or NULL handle. Race-safe against a late response via
+ * the existing xa_erase ownership model.
+ */
+void xdna_mailbox_cancel_msg(struct mailbox_channel *mailbox_chann, int msg_id);
+
 #if defined(CONFIG_DEBUG_FS)
 /*
  * xdna_mailbox_info_show() -- Show mailbox info for debug

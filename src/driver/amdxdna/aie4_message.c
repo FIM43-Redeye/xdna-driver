@@ -25,6 +25,14 @@ int aie4_xdna_msg_cb(void *handle, void __iomem *data, size_t size)
 	struct xdna_notify *cb_arg = handle;
 	int ret;
 
+	/* See xdna_msg_cb: a NULL handle (fire-and-forget send, or a
+	 * timed-out request flushed on channel teardown) has no waiter to
+	 * complete; without this guard the out: path NULL-derefs and oopses
+	 * during module unload of a firmware-wedged device.
+	 */
+	if (unlikely(!cb_arg))
+		return 0;
+
 	if (unlikely(!data))
 		goto out;
 

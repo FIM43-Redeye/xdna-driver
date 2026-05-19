@@ -22,6 +22,20 @@ int xdna_msg_cb(void *handle, void __iomem *data, size_t size)
 	struct xdna_notify *cb_arg = handle;
 	int ret;
 
+	/*
+	 * Channel teardown (xdna_mailbox_release_channel -> mailbox_release_msg)
+	 * invokes this callback as notify_cb(handle, NULL, 0) for every message
+	 * still outstanding -- including fire-and-forget sends queued with a
+	 * NULL handle, and requests whose waiter already returned -ETIME (the
+	 * timed-out message is not erased from chan_xa). A NULL cb_arg has no
+	 * completion/waiter to signal, so there is nothing to do. Without this
+	 * guard the out: path dereferences NULL (cb_arg->error,
+	 * complete(&cb_arg->comp)) and oopses during module unload of a
+	 * firmware-wedged device.
+	 */
+	if (unlikely(!cb_arg))
+		return 0;
+
 	if (unlikely(!data))
 		goto out;
 
@@ -68,6 +82,14 @@ int xdna_send_msg_wait(struct amdxdna_dev *xdna, struct mailbox_channel *chann,
 					  msecs_to_jiffies(RX_TIMEOUT));
 	if (!ret) {
 		XDNA_ERR(xdna, "Wait for completion timeout");
+		/*
+		 * Firmware never answered. Reclaim the abandoned message so a
+		 * later channel teardown does not flush it via
+		 * mailbox_release_msg() with a now-dangling on-stack handle
+		 * (hdl) -- the root cause of the xdna_mailbox_release_channel
+		 * NULL/UAF oops on module unload of a firmware-wedged device.
+		 */
+		xdna_mailbox_cancel_msg(chann, msg->id);
 		return -ETIME;
 	}
 

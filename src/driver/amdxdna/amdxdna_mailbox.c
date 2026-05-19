@@ -635,6 +635,33 @@ static int mailbox_polld(void *data)
 	return 0;
 }
 
+void xdna_mailbox_cancel_msg(struct mailbox_channel *mb_chann, int msg_id)
+{
+	struct mailbox_msg *mb_msg;
+
+	if (!mb_chann)
+		return;
+
+	/*
+	 * Reclaim a message whose response will never arrive (the caller's
+	 * wait timed out). xa_erase is the atomic ownership-transfer point,
+	 * the same model used by mailbox_get_resp() and mailbox_release_msg():
+	 * if a late firmware response is concurrently being processed it has
+	 * already erased the entry and owns the kfree, so we get NULL here;
+	 * if we win the erase, a subsequent mailbox_get_resp() finds no entry
+	 * and bails gracefully ("Cannot find msg"). kfree(NULL) is a no-op.
+	 *
+	 * Without this, a timed-out message lingers in chan_xa with a handle
+	 * that is about to dangle (an on-stack xdna_notify) or is NULL
+	 * (fire-and-forget send). Channel teardown then flushes it via
+	 * mailbox_release_msg() -> notify_cb(handle, NULL, 0), which
+	 * dereferences that handle and oopses on module unload of a
+	 * firmware-wedged device.
+	 */
+	mb_msg = xa_erase_irq(&mb_chann->chan_xa, MSG_ID2ENTRY(msg_id));
+	kfree(mb_msg);
+}
+
 int xdna_mailbox_send_msg(struct mailbox_channel *mb_chann,
 			  struct xdna_mailbox_msg *msg, u64 tx_timeout)
 {
