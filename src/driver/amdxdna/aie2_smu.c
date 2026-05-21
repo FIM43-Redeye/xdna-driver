@@ -136,15 +136,19 @@ int aie2_smu_start(struct amdxdna_dev_hdl *ndev)
 	int ret;
 
 	/*
-	 * If the hardware was not powered off properly, try to set
-	 * power off. Failing to power off indicates an unrecoverable
-	 * issue, return failure.
+	 * Defensively power-cycle: if the hardware was left powered on
+	 * (e.g. after a prior wedge), drop it first. A hung NPU cannot
+	 * acknowledge the POWER_OFF handshake, so this can fail with SMU
+	 * CMD_FAIL -- but that is precisely the recovery case where we
+	 * must still proceed to POWER_ON and let the PSP reload the
+	 * firmware. Demote the failure to a warning rather than aborting
+	 * bring-up; POWER_ON does not need a quiesced device.
 	 */
 	ret = aie2_smu_set_power_off(ndev);
-	if (ret) {
-		XDNA_ERR(ndev->xdna, "Access power failed, ret %d", ret);
-		return ret;
-	}
+	if (ret)
+		XDNA_WARN(ndev->xdna,
+			  "Defensive power off failed (ret %d); continuing to power on",
+			  ret);
 
 	ret = aie2_smu_set_power_on(ndev);
 	if (ret) {
