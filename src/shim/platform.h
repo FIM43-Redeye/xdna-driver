@@ -77,6 +77,15 @@ struct destroy_ctx_arg {
 struct config_ctx_cu_config_arg {
   uint32_t ctx_handle;
   const std::vector<char>& conf_buf;
+  // Physical start column for this partition, picked from
+  // aie_partition_obj.start_col_list.  CDO streams use partition-relative
+  // (logical) column indices; consumers that need physical addressing
+  // (e.g. the emulator) apply this as a shift.  Defaults to 0 so that
+  // call sites that don't populate it (e.g. the UUID-based hw_context
+  // ctor path that bypasses xclbin_parser) leave the emulator in its
+  // no-shift initial state rather than passing uninitialized memory
+  // through to the driver.
+  uint16_t start_col = 0;
 };
 
 struct config_ctx_debug_bo_arg {
