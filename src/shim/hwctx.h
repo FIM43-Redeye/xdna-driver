@@ -24,6 +24,13 @@ public:
   uint32_t
   get_ops_per_cycle() const;
 
+  // Candidate physical start columns the partition may be relocated to
+  // (from the xclbin's aie_partition_obj.start_col_list).  The driver's
+  // own column allocator picks one of these at hw_context create time.
+  // Empty if the xclbin omits the list.
+  const std::vector<uint16_t>&
+  get_start_col_list() const;
+
   int
   get_num_cus() const;
 
@@ -45,6 +52,7 @@ private:
   std::vector<cu_info> m_cus;
   uint32_t m_column_cnt;
   uint32_t m_ops_per_cycle;
+  std::vector<uint16_t> m_start_col_list;
 
   std::vector<uint8_t>
   get_pdi(const xrt_core::xclbin::aie_partition_obj& aie, uint16_t kernel_id) const;

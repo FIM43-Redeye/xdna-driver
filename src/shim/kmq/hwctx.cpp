@@ -50,9 +50,19 @@ hwctx_kmq(const device& device, const xrt::xclbin& xclbin, const qos_type& qos)
 
   //print_cu_config(cu_conf_param);
 
+  // Pick the first candidate physical start column from the partition's
+  // start_col_list.  The real driver allocates "first available" from
+  // this list at hw_context create time; for the emulator's purposes
+  // we mirror that choice so logical column indices in the CDO and
+  // runtime_sequence can be shifted into physical addressing.
+  // Empty list (older xclbins): leave start_col at 0.
+  const auto& scl = xp.get_start_col_list();
+  uint16_t start_col = scl.empty() ? 0 : scl.front();
+
   config_ctx_cu_config_arg arg = {
     .ctx_handle = get_slotidx(),
     .conf_buf = cu_conf_param_buf,
+    .start_col = start_col,
   };
   device.get_pdev().drv_ioctl(drv_ioctl_cmd::config_ctx_cu_config, &arg);
 
