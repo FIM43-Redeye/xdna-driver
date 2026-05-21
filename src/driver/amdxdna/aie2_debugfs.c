@@ -769,6 +769,44 @@ static ssize_t aie2_tdr_control_write(struct file *file, const char __user *ptr,
 
 AIE2_DBGFS_FOPS(tdr_control, aie2_tdr_control_show, aie2_tdr_control_write);
 
+static int aie2_reload_show(struct seq_file *m, void *unused)
+{
+	seq_puts(m, "write 'reload' to trigger an in-place hardware + firmware reload\n");
+	return 0;
+}
+
+static ssize_t aie2_reload_write(struct file *file, const char __user *ptr,
+				 size_t len, loff_t *off)
+{
+	struct amdxdna_dev_hdl *ndev = file_to_ndev_rw(file);
+	struct amdxdna_dev *xdna = ndev->xdna;
+	char input[SIZE + 1];
+	int ret;
+
+	if (len > SIZE) {
+		XDNA_ERR(xdna, "Length %zu of the buffer exceeds size %d", len, SIZE);
+		return -EINVAL;
+	}
+
+	if (copy_from_user(input, ptr, len))
+		return -EFAULT;
+	input[len] = '\0';
+
+	if (!sysfs_streq(input, "reload")) {
+		XDNA_ERR(xdna, "Invalid reload action: %s (expected 'reload')", input);
+		return -EINVAL;
+	}
+
+	XDNA_WARN(xdna, "In-place hardware reload requested via debugfs");
+	ret = aie2_hw_reload(xdna);
+	if (ret)
+		return ret;
+
+	return len;
+}
+
+AIE2_DBGFS_FOPS(reload, aie2_reload_show, aie2_reload_write);
+
 static int aie2_get_app_health_show(struct seq_file *m, void *unused)
 {
 	struct amdxdna_dev_hdl *ndev = m->private;
@@ -967,6 +1005,7 @@ const struct {
 	AIE2_DBGFS_FILE(telemetry_debug, 0400),
 	AIE2_DBGFS_FILE(ctx_rq, 0400),
 	AIE2_DBGFS_FILE(tdr_control, 0600),
+	AIE2_DBGFS_FILE(reload, 0600),
 	AIE2_DBGFS_FILE(get_app_health, 0400),
 	AIE2_DBGFS_FILE(dump_fw_log, 0600),
 	AIE2_DBGFS_FILE(dump_fw_log_buffer, 0400),

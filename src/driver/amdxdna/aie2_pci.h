@@ -388,6 +388,7 @@ int aie2_runtime_cfg(struct amdxdna_dev_hdl *ndev,
 extern uint aie2_control_flags;
 extern const struct amdxdna_dev_ops aie2_ops;
 int aie2_check_protocol(struct amdxdna_dev_hdl *ndev, u32 fw_major, u32 fw_minor);
+int aie2_hw_reload(struct amdxdna_dev *xdna);
 
 /* aie2_smu.c */
 int aie2_smu_start(struct amdxdna_dev_hdl *ndev);

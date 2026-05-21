@@ -489,6 +489,29 @@ static int aie2_hw_resume(struct amdxdna_dev *xdna)
 	return 0;
 }
 
+/*
+ * In-place hardware + firmware reload: a full device stop/start cycle
+ * (SMU power-cycle, PSP firmware reload, mailbox re-init) without
+ * unloading the module. This is the device-level recovery path the PM
+ * suspend/resume callbacks already use -- exposed here so a wedged NPU
+ * can be recovered without "modprobe -r", which risks an unkillable
+ * drm_dev_unplug/synchronize_srcu wedge on a poisoned mailbox.
+ */
+int aie2_hw_reload(struct amdxdna_dev *xdna)
+{
+	int ret;
+
+	XDNA_WARN(xdna, "In-place hardware reload requested");
+	aie2_hw_suspend(xdna);
+	ret = aie2_hw_resume(xdna);
+	if (ret)
+		XDNA_ERR(xdna, "Hardware reload failed, ret %d", ret);
+	else
+		XDNA_WARN(xdna, "Hardware reload complete");
+
+	return ret;
+}
+
 static int aie2_init(struct amdxdna_dev *xdna)
 {
 	struct pci_dev *pdev = to_pci_dev(xdna->ddev.dev);
