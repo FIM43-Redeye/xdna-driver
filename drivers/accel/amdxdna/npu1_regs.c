@@ -68,6 +68,16 @@ const struct dpm_clk_freq npu1_dpm_clk_table[] = {
 static const struct amdxdna_fw_feature_tbl npu1_fw_feature_table[] = {
 	{ .major = 5, .min_minor = 7 },
 	{ .features = BIT_U64(AIE2_NPU_COMMAND), .major = 5, .min_minor = 8 },
+	/*
+	 * Phoenix firmware (verified at 1.5.5.391 / protocol 5.8) implements
+	 * MSG_OP_AIE_RW_ACCESS (opcode 0x203) -- confirmed by raw-mailbox
+	 * probe returning AIE2_STATUS_SUCCESS with a cycle-correct Timer_Low
+	 * readback. Upstream drivers/accel npu1_fw_feature_table omits the
+	 * AIE2_RW_ACCESS bit, leaving the AIE_FEATURE_ON check in
+	 * aie2_send_aie_rw_access_msg as the only obstacle to using
+	 * xrt::hw_context::read_aie_reg / write_aie_reg on Phoenix.
+	 */
+	{ .features = BIT_U64(AIE2_RW_ACCESS), .major = 5, .min_minor = 8 },
 	{ 0 }
 };
 
