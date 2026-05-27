@@ -469,6 +469,54 @@ static bool amdxdna_tile_rw_filter(struct amdxdna_hwctx *hwctx, void *arg)
 	return hwctx->client->pid == wa->access->pid && hwctx->id == wa->access->context_id;
 }
 
+/*
+ * amdxdna_aie_tile_check_safety - guard AIE_RW_ACCESS against unowned tiles
+ *
+ * The AIE_RW_ACCESS firmware path forwards the user-supplied (col, row, addr)
+ * to the AIE array's AXI fabric. An access targeting a tile that is not
+ * powered or routed for the calling hwctx never receives an AXI ACK and
+ * stalls the firmware's Xtensa CPU indefinitely; the mailbox stops servicing
+ * requests and recovery requires a full SoC reboot.
+ *
+ * For column-rectangular partitions, owning a column implies ownership of
+ * the column's shim tile (row 0, required to load a kernel) and its compute
+ * tiles. Memtile rows, however, are not implicitly claimed by column
+ * ownership -- firmware powers them based on whether the loaded kernel
+ * actually uses memtile resources, which the driver cannot observe through
+ * the current AIE2 create_ctx protocol (start_col/num_col only, no
+ * per-row tile claim). Memtile accesses are therefore the one case where
+ * a request that passes the column bounds check can still reach an unowned
+ * tile.
+ *
+ * This guard is scoped to mgmt_prot_major <= 5 (Phoenix-class). Strix and
+ * later (>= 6.x) use a separate create_partition protocol that carries
+ * per-tile-row counts and ship AIE_RW_ACCESS enabled upstream; their
+ * firmware is presumed validated by AMD.
+ *
+ * Lift this guard once the driver tracks per-hwctx memtile ownership and
+ * can check (col, row) against the partition descriptor.
+ */
+static int amdxdna_aie_tile_check_safety(struct amdxdna_hwctx *hwctx,
+					 const struct amdxdna_drm_aie_tile_access *acc,
+					 struct aie_device *aie)
+{
+	struct amdxdna_dev *xdna = hwctx->client->xdna;
+	u32 mem_row_start = aie->metadata.mem.row_start;
+	u32 mem_row_end = mem_row_start + aie->metadata.mem.row_count;
+
+	if (aie->mgmt_prot_major > 5)
+		return 0;
+
+	if (acc->row >= mem_row_start && acc->row < mem_row_end) {
+		XDNA_ERR(xdna,
+			 "AIE_RW_ACCESS to memtile row %u blocked (prot %u.%u): partition ownership of column does not imply memtile ownership, and an access to an unowned tile wedges firmware until SoC reboot",
+			 acc->row, aie->mgmt_prot_major, aie->mgmt_prot_minor);
+		return -EPERM;
+	}
+
+	return 0;
+}
+
 static int amdxdna_aie_tile_read_reg(struct amdxdna_hwctx *hwctx,
 				     struct amdxdna_tile_rw_walk_arg *wa)
 {
@@ -540,6 +588,7 @@ static int amdxdna_aie_tile_read_cb(struct amdxdna_hwctx *hwctx, void *arg)
 {
 	struct amdxdna_dev *xdna = hwctx->client->xdna;
 	struct amdxdna_tile_rw_walk_arg *wa = arg;
+	int ret;
 
 	if (!amdxdna_client_visible(hwctx->client)) {
 		XDNA_ERR(xdna, "Permission denied for context %u", wa->access->context_id);
@@ -551,6 +600,10 @@ static int amdxdna_aie_tile_read_cb(struct amdxdna_hwctx *hwctx, void *arg)
 			 wa->access->col, hwctx->num_col);
 		return -EINVAL;
 	}
+
+	ret = amdxdna_aie_tile_check_safety(hwctx, wa->access, wa->aie);
+	if (ret)
+		return ret;
 
 	switch (wa->access->type) {
 	case AMDXDNA_AIE_TILE_ACCESS_REG:
@@ -718,6 +771,7 @@ static int amdxdna_aie_tile_write_cb(struct amdxdna_hwctx *hwctx, void *arg)
 {
 	struct amdxdna_dev *xdna = hwctx->client->xdna;
 	struct amdxdna_tile_rw_walk_arg *wa = arg;
+	int ret;
 
 	if (!amdxdna_client_visible(hwctx->client)) {
 		XDNA_ERR(xdna, "Permission denied for context %u", wa->access->context_id);
@@ -729,6 +783,10 @@ static int amdxdna_aie_tile_write_cb(struct amdxdna_hwctx *hwctx, void *arg)
 			 wa->access->col, hwctx->num_col);
 		return -EINVAL;
 	}
+
+	ret = amdxdna_aie_tile_check_safety(hwctx, wa->access, wa->aie);
+	if (ret)
+		return ret;
 
 	switch (wa->access->type) {
 	case AMDXDNA_AIE_TILE_ACCESS_REG:
