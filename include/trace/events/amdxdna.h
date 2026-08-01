@@ -6,6 +6,7 @@
 #if !defined(_AMDXDNA_TRACE_EVENTS_H_) || defined(TRACE_HEADER_MULTI_READ)
 #define _AMDXDNA_TRACE_EVENTS_H_
 
+#include <linux/io.h>
 #include <linux/stringify.h>
 #include <linux/tracepoint.h>
 #include <linux/version.h>
@@ -87,6 +88,32 @@ DEFINE_EVENT(xdna_mbox_msg, mbox_set_tail,
 DEFINE_EVENT(xdna_mbox_msg, mbox_set_head,
 	     TP_PROTO(char *name, u8 chann_id, u32 opcode, u32 id),
 	     TP_ARGS(name, chann_id, opcode, id)
+);
+
+TRACE_EVENT(mbox_response,
+	    TP_PROTO(char *name, u8 chann_id, u32 opcode, u32 msg_id,
+		     u32 size, const void __iomem *data),
+
+	    TP_ARGS(name, chann_id, opcode, msg_id, size, data),
+
+	    TP_STRUCT__entry(__string(name, name)
+			     __field(u32, chann_id)
+			     __field(u32, opcode)
+			     __field(u32, msg_id)
+			     __field(u32, size)
+			     __dynamic_array(u8, data, size)),
+
+	    TP_fast_assign(__assign_str(name);
+			   __entry->chann_id = chann_id;
+			   __entry->opcode = opcode;
+			   __entry->msg_id = msg_id;
+			   __entry->size = size;
+			   memcpy_fromio(__get_dynamic_array(data), data, size);),
+
+	    TP_printk("%s.%d id 0x%x opcode 0x%x size %u data %s",
+		      __get_str(name), __entry->chann_id, __entry->msg_id,
+		      __entry->opcode, __entry->size,
+		      __print_hex(__get_dynamic_array(data), __entry->size))
 );
 
 DECLARE_EVENT_CLASS(xdna_mbox_name_id,

@@ -269,6 +269,9 @@ mailbox_get_resp(struct mailbox_channel *mb_chann, struct xdna_msg_header *heade
 
 	MB_DBG(mb_chann, "opcode 0x%x size %d id 0x%x",
 	       header->opcode, header->total_size, header->id);
+	trace_mbox_response(MAILBOX_NAME, mb_chann->msix_irq,
+			    header->opcode, header->id,
+			    header->total_size, data);
 	if (mb_msg->notify_cb) {
 		ret = mb_msg->notify_cb(mb_msg->handle, data, header->total_size);
 		if (unlikely(ret))
