@@ -597,6 +597,65 @@ struct aie_rw_access_resp {
 	__u32			reg_read_value;
 } __packed;
 
+/* Phoenix protocol 5.8 predates the context-scoped AIE_RW_ACCESS layout. */
+struct phoenix_aie_rw_access_req {
+	enum aie2_access_type	type;
+	__u8			row;
+	__u8			col;
+	__u16			reserved;
+	union {
+		struct {
+			__u64	dram_addr;
+			__u32	aie_offset;
+			__u32	size;
+		} __packed mem;
+		struct {
+			__u32	aie_offset;
+			__u32	write_value;
+		} __packed reg;
+	};
+} __packed;
+
+struct phoenix_aie_rw_access_resp {
+	enum aie2_msg_status	status;
+	__u32			reg_read_value;
+} __packed;
+
+static_assert(sizeof(struct phoenix_aie_rw_access_req) == 24);
+static_assert(offsetof(struct phoenix_aie_rw_access_req, row) == 4);
+static_assert(offsetof(struct phoenix_aie_rw_access_req, col) == 5);
+static_assert(offsetof(struct phoenix_aie_rw_access_req, mem) == 8);
+static_assert(sizeof(struct phoenix_aie_rw_access_resp) == 8);
+
+static inline bool
+aie2_phoenix_legacy_rw_mem_supported(__u32 prot_major, __u32 prot_minor,
+				     __u32 fw_major, __u32 fw_minor,
+				     __u32 fw_patch, __u32 fw_build)
+{
+	/* Fail closed until another signed image's wire ABI is derived. */
+	return prot_major == 5 && prot_minor == 8 &&
+		fw_major == 1 && fw_minor == 5 &&
+		fw_patch == 5 && fw_build == 391;
+}
+
+static inline void
+aie2_init_phoenix_rw_mem_req(struct phoenix_aie_rw_access_req *req,
+			     enum aie2_access_type type, __u8 row,
+			     __u32 start_col, __u8 relative_col,
+			     __u32 aie_addr, __u64 dram_addr, __u32 size)
+{
+	*req = (struct phoenix_aie_rw_access_req) {
+		.type = type,
+		.row = row,
+		.col = start_col + relative_col,
+		.mem = {
+			.dram_addr = dram_addr,
+			.aie_offset = aie_addr,
+			.size = size,
+		},
+	};
+}
+
 struct calibrate_clock_req {
 	__u64			time_base_ns;
 } __packed;

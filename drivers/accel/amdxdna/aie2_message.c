@@ -28,6 +28,10 @@
 
 #define EXEC_MSG_OPS(xdna)	((xdna)->dev_handle->exec_msg_ops)
 
+static int aie2_rw_aie_mem_phoenix(struct amdxdna_hwctx *hwctx, bool is_read,
+				   u8 row, u8 col, u32 aie_addr,
+				   dma_addr_t dram_addr, u32 size);
+
 int aie2_suspend_fw(struct amdxdna_dev_hdl *ndev)
 {
 	DECLARE_AIE_MSG(suspend, MSG_OP_SUSPEND);
@@ -1030,6 +1034,11 @@ void aie2_msg_init(struct amdxdna_dev_hdl *ndev)
 	if (AIE_FEATURE_ON(&ndev->aie, AIE2_RW_ACCESS)) {
 		ndev->aie.msg_ops.rw_reg = aie2_rw_aie_reg;
 		ndev->aie.msg_ops.rw_mem = aie2_rw_aie_mem;
+	} else if (aie2_phoenix_legacy_rw_mem_supported(ndev->aie.mgmt_prot_major,
+			ndev->aie.mgmt_prot_minor, ndev->aie.xdna->fw_ver.major,
+			ndev->aie.xdna->fw_ver.minor, ndev->aie.xdna->fw_ver.patch,
+			ndev->aie.xdna->fw_ver.build)) {
+		ndev->aie.msg_ops.rw_mem = aie2_rw_aie_mem_phoenix;
 	}
 
 	if (AIE_FEATURE_ON(&ndev->aie, AIE2_FW_LOG)) {
@@ -1478,4 +1487,26 @@ int aie2_rw_aie_mem(struct amdxdna_hwctx *hwctx, bool is_read,
 	}
 
 	return 0;
+}
+
+static int aie2_rw_aie_mem_phoenix(struct amdxdna_hwctx *hwctx, bool is_read,
+				   u8 row, u8 col, u32 aie_addr,
+				   dma_addr_t dram_addr, u32 size)
+{
+	DECLARE_AIE_MSG(phoenix_aie_rw_access, MSG_OP_AIE_RW_ACCESS);
+	struct amdxdna_dev_hdl *ndev = hwctx->client->xdna->dev_handle;
+	struct amdxdna_dev *xdna = hwctx->client->xdna;
+	enum aie2_access_type type;
+	int ret;
+
+	type = is_read ? AIE2_ACCESS_TYPE_MEM_READ : AIE2_ACCESS_TYPE_MEM_WRITE;
+	aie2_init_phoenix_rw_mem_req(&req, type, row, hwctx->start_col,
+				     col, aie_addr, dram_addr, size);
+
+	ret = aie_send_mgmt_msg_wait(&ndev->aie, &msg);
+	if (ret)
+		XDNA_ERR(xdna, "Phoenix AIE mem %s failed, ret %d",
+			 is_read ? "read" : "write", ret);
+
+	return ret;
 }

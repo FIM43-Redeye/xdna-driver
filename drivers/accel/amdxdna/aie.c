@@ -577,7 +577,7 @@ int amdxdna_aie_tile_read(struct aie_device *aie,
 
 	drm_WARN_ON(&xdna->ddev, !mutex_is_locked(&xdna->dev_lock));
 
-	if (!aie->msg_ops.rw_reg || !aie->msg_ops.rw_mem)
+	if (!aie->msg_ops.rw_reg && !aie->msg_ops.rw_mem)
 		return -EOPNOTSUPP;
 
 	if (args->num_element != 1) {
@@ -608,6 +608,9 @@ int amdxdna_aie_tile_read(struct aie_device *aie,
 		XDNA_ERR(xdna, "Invalid access type %u", access.type);
 		return -EINVAL;
 	}
+	if ((access.type == AMDXDNA_AIE_TILE_ACCESS_REG && !aie->msg_ops.rw_reg) ||
+	    (access.type == AMDXDNA_AIE_TILE_ACCESS_MEM && !aie->msg_ops.rw_mem))
+		return -EOPNOTSUPP;
 
 	if (XDNA_MBZ_DBG(xdna, &access.pad, sizeof(access.pad)))
 		return -EINVAL;
@@ -754,7 +757,7 @@ int amdxdna_aie_tile_write(struct aie_device *aie,
 
 	drm_WARN_ON(&xdna->ddev, !mutex_is_locked(&xdna->dev_lock));
 
-	if (!aie->msg_ops.rw_reg || !aie->msg_ops.rw_mem)
+	if (!aie->msg_ops.rw_reg && !aie->msg_ops.rw_mem)
 		return -EOPNOTSUPP;
 
 	buf = u64_to_user_ptr(args->buffer);
@@ -779,6 +782,9 @@ int amdxdna_aie_tile_write(struct aie_device *aie,
 		XDNA_ERR(xdna, "Invalid access type %u", access.type);
 		return -EINVAL;
 	}
+	if ((access.type == AMDXDNA_AIE_TILE_ACCESS_REG && !aie->msg_ops.rw_reg) ||
+	    (access.type == AMDXDNA_AIE_TILE_ACCESS_MEM && !aie->msg_ops.rw_mem))
+		return -EOPNOTSUPP;
 
 	if (XDNA_MBZ_DBG(xdna, &access.pad, sizeof(access.pad)))
 		return -EINVAL;
